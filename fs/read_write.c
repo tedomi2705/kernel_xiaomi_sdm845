@@ -620,15 +620,18 @@ extern int ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr,
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-	struct fd f = fdget_pos(fd);
+	struct fd f;
 	ssize_t ret = -EBADF;
+	loff_t pos;
+
+	f = fdget_pos(fd);
 
 	if (f.file) {
 #ifdef CONFIG_KSU
-		if (unlikely(ksu_vfs_read_hook)) 
+		if (unlikely(ksu_vfs_read_hook))
 			ksu_handle_sys_read(fd, &buf, &count);
 #endif
-		loff_t pos = file_pos_read(f.file);
+		pos = file_pos_read(f.file);
 		ret = vfs_read(f.file, buf, count, &pos);
 		if (ret >= 0)
 			file_pos_write(f.file, pos);
