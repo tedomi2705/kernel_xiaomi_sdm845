@@ -170,6 +170,13 @@ static void mnt_free_id(struct mount *mnt)
 	int id = mnt->mnt_id;
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	int mnt_id_backup = mnt->mnt.susfs_mnt_id_backup;
+	struct idr_layer *p;
+	int shift;
+	int idr_id;
+	int offset;
+	int n;
+	struct ida_bitmap *bitmap;
+
 	// We should first check the 'mnt->mnt.susfs_mnt_id_backup', see if it is DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE
 	// if so, these mnt_id were not assigned by mnt_alloc_id() so we don't need to free it.
 	if (unlikely(mnt_id_backup == DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE)) {
@@ -178,9 +185,28 @@ static void mnt_free_id(struct mount *mnt)
 	// Now we can check if its mnt_id is sus
 	if (unlikely(mnt->mnt_id >= DEFAULT_SUS_MNT_ID)) {
 		spin_lock(&mnt_id_lock);
-		ida_remove(&susfs_mnt_id_ida, id);
-		if (susfs_mnt_id_start > id)
-			susfs_mnt_id_start = id;
+
+		p = susfs_mnt_id_ida.idr.top;
+		shift = (susfs_mnt_id_ida.idr.layers - 1) * IDR_BITS;
+		idr_id = id / IDA_BITMAP_BITS;
+		offset = id % IDA_BITMAP_BITS;
+
+		while ((shift > 0) && p) {
+			n = (idr_id >> shift) & IDR_MASK;
+			p = p->ary[n];
+			shift -= IDR_BITS;
+		}
+
+		if (p) {
+			n = idr_id & IDR_MASK;
+			bitmap = (void *)p->ary[n];
+			if (bitmap && test_bit(offset, bitmap->bitmap)) {
+				ida_remove(&susfs_mnt_id_ida, id);
+				if (susfs_mnt_id_start > id)
+					susfs_mnt_id_start = id;
+			}
+		}
+
 		spin_unlock(&mnt_id_lock);
 		return;
 	}
@@ -190,9 +216,28 @@ static void mnt_free_id(struct mount *mnt)
 		// If mnt->mnt.susfs_mnt_id_backup is not zero, it means mnt->mnt_id is spoofed,
 		// so here we return the original mnt_id for being freed.
 		spin_lock(&mnt_id_lock);
-		ida_remove(&mnt_id_ida, mnt_id_backup);
-		if (mnt_id_start > mnt_id_backup)
-			mnt_id_start = mnt_id_backup;
+
+		p = mnt_id_ida.idr.top;
+		shift = (mnt_id_ida.idr.layers - 1) * IDR_BITS;
+		idr_id = mnt_id_backup / IDA_BITMAP_BITS;
+		offset = mnt_id_backup % IDA_BITMAP_BITS;
+
+		while ((shift > 0) && p) {
+			n = (idr_id >> shift) & IDR_MASK;
+			p = p->ary[n];
+			shift -= IDR_BITS;
+		}
+
+		if (p) {
+			n = idr_id & IDR_MASK;
+			bitmap = (void *)p->ary[n];
+			if (bitmap && test_bit(offset, bitmap->bitmap)) {
+				ida_remove(&mnt_id_ida, mnt_id_backup);
+				if (mnt_id_start > mnt_id_backup)
+					mnt_id_start = mnt_id_backup;
+			}
+		}
+
 		spin_unlock(&mnt_id_lock);
 		return;
 	}
@@ -248,9 +293,35 @@ void mnt_release_group_id(struct mount *mnt)
 	// If mnt->mnt_group_id >= DEFAULT_SUS_MNT_GROUP_ID, it means 'mnt' is also sus mount,
 	// then we free the mnt->mnt_group_id from susfs_mnt_group_ida
 	if (id >= DEFAULT_SUS_MNT_GROUP_ID) {
-		ida_remove(&susfs_mnt_group_ida, id);
-		if (susfs_mnt_group_start > id)
-			susfs_mnt_group_start = id;
+		struct idr_layer *p;
+		int shift;
+		int idr_id;
+		int offset;
+		int n;
+		struct ida_bitmap *bitmap;
+
+		p = susfs_mnt_group_ida.idr.top;
+		shift = (susfs_mnt_group_ida.idr.layers - 1) * IDR_BITS;
+		idr_id = id / IDA_BITMAP_BITS;
+		offset = id % IDA_BITMAP_BITS;
+
+		while ((shift > 0) && p) {
+			n = (idr_id >> shift) & IDR_MASK;
+			p = p->ary[n];
+			shift -= IDR_BITS;
+		}
+
+		if (p) {
+			n = idr_id & IDR_MASK;
+			bitmap = (void *)p->ary[n];
+
+			if (bitmap && test_bit(offset, bitmap->bitmap)) {
+				ida_remove(&susfs_mnt_group_ida, id);
+				if (susfs_mnt_group_start > id)
+					susfs_mnt_group_start = id;
+			}
+		}
+
 		mnt->mnt_group_id = 0;
 		return;
 	}
